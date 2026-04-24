@@ -25,7 +25,7 @@ archivo_subido = st.sidebar.file_uploader(
     3. Duración: Tiempo de ráfaga.
     
     Ejemplo:
-    P1, 0, 5
+    P1, 0, 5  |  
     P2, 2, 3
     """
 )
