@@ -12,7 +12,23 @@ st.markdown("Visualización de métricas de rendimiento para políticas **FCFS**
 
 # 2. Barra Lateral
 st.sidebar.header("🛠️ Configuración")
-archivo_subido = st.sidebar.file_uploader("Cargar archivo de procesos", type=["csv", "txt"])
+archivo_subido = st.sidebar.file_uploader(
+    "Cargar archivo de procesos", 
+    type=["csv", "txt"],
+    help="""
+    FORMATO DEL ARCHIVO:
+    El archivo debe ser CSV o TXT.
+    
+    Columnas requeridas:
+    1. Proceso: Nombre.
+    2. T. llegada: (Opcional) Tiempo de entrada.
+    3. Duración: Tiempo de ráfaga.
+    
+    Ejemplo:
+    P1, 0, 5
+    P2, 2, 3
+    """
+)
 
 st.sidebar.markdown("---")
 st.sidebar.header("🕹️ Control de Simulación")
