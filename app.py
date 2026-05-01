@@ -2,159 +2,221 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import time
-from logica_planificacion import cargar_procesos, calcular_fcfs, calcular_spn
+from logica_planificacion import cargar_procesos, calcular_fcfs, calcular_spn, calcular_srt, calcular_rr
 
 # 1. Configuración de la página
-st.set_page_config(page_title="Simulador CPU - Lab 1", layout="wide", page_icon="🖥️")
+st.set_page_config(page_title="Simulador CPU - Sistemas Operativos", layout="wide", page_icon="🖥️")
 
-st.title("🖥️ Simulador de Planificación de CPU")
-st.markdown("Visualización de métricas de rendimiento para políticas **FCFS** y **SPN**.")
+# Estilo personalizado para el título
+st.title("🖥️ Simulador de Planificación de CPU no Expulsivo y Expulsivo")
+st.markdown("""
+Esta herramienta permite comparar políticas de planificación **Expulsivas** y **No Expulsivas**. 
+Sube un archivo CSV o TXT para comenzar.
+""")
+# --- MANUAL DE USUARIO RESUMIDO  ---
+with st.expander("📖 Guía Rápida de Uso"):
+    st.markdown("""
+    ### 🚀 ¿Cómo usar el Simulador?
+    
+    1. **Configuración de Datos:** 
+       - En el panel izquierdo **Cargar un CSV** el cual debe tener las columnas: Proceso, T. llegada (opcional), Duración.
+       - Proceso, T. llegada, Duración
+        - P0,   0,  6
+        - P1,   1,  3
+        - P2,   3,  2
+        - P3,   5,  4
+    
+    2. **Seleccione el modo de simulacion:**
+       - Selecciona un algoritmo entre FCFS, SPN, SRT y RR.
+       - Si eliges Round Robin, ingresa el valor del Quantum (q).
+       
+    3. **Modo de Visualización Gantt:**
+       - **Estático** para ver los resultados en una tabla final.
+       - **Simulación Animada** El sistema simulará la ejecución con una barra de progreso dinamico.
+       - En caso de elegir **animación**, puedes ajustar la velocidad y dar iniciar simulacion que aparece mas abajos.
+       
+    ⚠️ *Nota: Para su funcionamiento correcto y no alucine el sistema. El archivo CSV solo puede contener un ejemplo de n procesos*
+    """)
 
-# 2. Barra Lateral
-st.sidebar.header("🛠️ Configuración")
+# 2. Barra Lateral (Configuración)
+st.sidebar.header("⚙️ Parámetros de Simulación")
+
 archivo_subido = st.sidebar.file_uploader(
     "Cargar archivo de procesos", 
-    type=["csv", "txt"],
-    help="""
-    FORMATO DEL ARCHIVO:
-    El archivo debe ser CSV o TXT.
-    
-    Columnas requeridas:
-    1. Proceso: Nombre.
-    2. T. llegada: (Opcional) Tiempo de entrada.
-    3. Duración: Tiempo de ráfaga.
-    
-    Ejemplo:
-    P1, 0, 5  |  
-    P2, 2, 3
-    """
+    type=["csv", "txt"]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.header("🕹️ Control de Simulación")
-modo_simulacion = st.sidebar.radio("Modo de vista:", ["Completo", "Manual (Slider)", "Automático (Play)"])
 
-velocidad = 1.0
-if modo_simulacion == "Automático (Play)":
-    velocidad = st.sidebar.select_slider(
-        "Velocidad:", 
-        options=[2.0, 1.0, 0.5, 0.1], 
-        value=1.0, 
-        format_func=lambda x: "Lento" if x==2.0 else "Normal" if x==1.0 else "Rápido" if x==0.5 else "Súper Rápido"
+# Selección de Algoritmo
+metodo = st.sidebar.selectbox(
+    "Seleccione el Algoritmo:",
+    [
+        "FCFS (First-Come First-Served)",
+        "SPN (Shortest Process Next)",
+        "SRT (Shortest Remaining Time)",
+        "Round Robin (RR)"
+    ]
+)
+
+# Entrada dinámica de Quantum (solo si es Round Robin)
+quantum_usuario = 2
+if "Round Robin" in metodo:
+    quantum_usuario = st.sidebar.number_input(
+        "Ingrese el valor del Quantum (q):", 
+        min_value=1, 
+        max_value=20, 
+        value=2,
+        help="Define el tiempo máximo de ráfaga por turno."
     )
-    boton_play = st.sidebar.button("▶️ Iniciar Simulación")
 
-# 3. Función Gantt corregida
-def dibujar_gantt(df, titulo, color, tiempo_actual):
-    fig, ax = plt.subplots(figsize=(10, 2.2))
-    df_visible = df[df['T. Inicio'] <= tiempo_actual].copy()
+st.sidebar.markdown("---")
+modo_vista = st.sidebar.radio("Modo de Visualización:", ["Estático (Tabla Final)", "Simulación Animada"])
+
+# 3. Función para dibujar el Diagrama de Gantt
+def dibujar_gantt(gantt_data, titulo, color_hex, max_t_total=None):
+    # Ya no retornamos None si está vacía, creamos la figura de todos modos
+    fig, ax = plt.subplots(figsize=(10, 3))
     
-    for i, fila in df_visible.iterrows():
-        duracion_real = fila['Duración']
-        progreso = min(duracion_real, tiempo_actual - fila['T. Inicio'])
-        
-        if progreso > 0:
-            ax.broken_barh([(fila['T. Inicio'], progreso)], (10, 9), facecolors=(color), edgecolor='black')
-            if progreso > duracion_real / 3:
-                ax.text(fila['T. Inicio'] + (progreso/2), 14.5, fila['Proceso'], 
-                        ha='center', va='center', color='white', fontweight='bold', fontsize=9)
+    if gantt_data:
+        for bloque in gantt_data:
+            ax.broken_barh(
+                [(bloque['Inicio'], bloque['Duración'])], 
+                (10, 9), 
+                facecolors=color_hex, 
+                edgecolor='black'
+            )
+            ax.text(
+                bloque['Inicio'] + bloque['Duración']/2, 
+                14.5, 
+                bloque['Proceso'], 
+                ha='center', va='center', color='white', fontweight='bold'
+            )
 
-    ax.set_xlim(0, df['T. Final'].max() + 1)
-    ax.set_ylim(5, 25)
+    ax.set_xlabel("Línea de Tiempo")
     ax.set_yticks([])
-    ax.set_title(titulo, fontsize=10)
-    ax.grid(True, axis='x', linestyle='--', alpha=0.5)
+    ax.set_title(titulo)
+    ax.grid(True, axis='x', linestyle='--', alpha=0.6)
+    
+    # Usamos el tiempo máximo total para que el gráfico no se mueva
+    if max_t_total:
+        ax.set_xlim(0, max_t_total + 1)
+    
     plt.tight_layout()
     return fig
 
-# 4. Lógica Principal
+# 4. Lógica Principal de Ejecución
 if archivo_subido is not None:
     df_input = cargar_procesos(archivo_subido)
 
     if df_input is not None:
-        st.sidebar.success(f"✅ Datos cargados: {archivo_subido.name}")
+        st.sidebar.success("✅ Datos cargados correctamente")
         
-        # Procesamiento
-        res_fcfs = calcular_fcfs(df_input)
-        res_spn = calcular_spn(df_input)
-        t_max_final = int(max(res_fcfs['T. Final'].max(), res_spn['T. Final'].max()))
+        # Selección de lógica según el método
+        if "FCFS" in metodo:
+            res, gantt_info = calcular_fcfs(df_input)
+            color = "#1f77b4" # Azul
+        elif "SPN" in metodo:
+            res, gantt_info = calcular_spn(df_input)
+            color = "#9467bd" # Morado
+        elif "SRT" in metodo:
+            res, gantt_info = calcular_srt(df_input)
+            color = "#ff7f0e" # Naranja
+        elif "Round Robin" in metodo:
+            res, gantt_info = calcular_rr(df_input, quantum_usuario)
+            color = "#2ca02c" # Verde
 
-        # Contenedor dinámico para la simulación
-        espacio_web = st.empty()
-
-        def mostrar_interfaz(t):
-            with espacio_web.container():
-                st.write(f"### ⏱️ Tiempo transcurrido: {t} unidades")
-                
-                # --- FCFS ---
-                st.subheader("1. FCFS (First-Come, First-Served)")
-                st.dataframe(res_fcfs, use_container_width=True)
-                st.pyplot(dibujar_gantt(res_fcfs, "Gantt FCFS", "#1f77b4", t))
-                
-                m1, m2 = st.columns(2)
-                tme_f = res_fcfs['T. Espera'].mean()
-                tmr_f = res_fcfs['T. Retorno'].mean()
-                m1.metric("Espera Media (FCFS)", f"{tme_f:.2f}")
-                m2.metric("Retorno Medio (FCFS)", f"{tmr_f:.2f}")
-
-                st.markdown("---")
-
-                # --- SPN ---
-                st.subheader("2. SPN (Shortest Process Next)")
-                st.dataframe(res_spn, use_container_width=True)
-                st.pyplot(dibujar_gantt(res_spn, "Gantt SPN", "#2ca02c", t))
-                
-                m3, m4 = st.columns(2)
-                tme_s = res_spn['T. Espera'].mean()
-                tmr_s = res_spn['T. Retorno'].mean()
-                m3.metric("Espera Media (SPN)", f"{tme_s:.2f}")
-                m4.metric("Retorno Medio (SPN)", f"{tmr_s:.2f}")
-                
-                return tme_f, tmr_f, tme_s, tmr_s
-
-        # Control de flujo de la simulación
-        if modo_simulacion == "Automático (Play)" and 'boton_play' in locals() and boton_play:
-            for t in range(t_max_final + 1):
-                metricas = mostrar_interfaz(t)
-                time.sleep(velocidad)
-        elif modo_simulacion == "Manual (Slider)":
-            t_sl = st.sidebar.slider("Línea de tiempo", 0, t_max_final, 0)
-            metricas = mostrar_interfaz(t_sl)
-        else:
-            metricas = mostrar_interfaz(t_max_final)
-
-        # --- COMPARATIVA Y CONCLUSIÓN ---
-        tme_f, tmr_f, tme_s, tmr_s = metricas
-        st.markdown("---")
-        st.header("🏆 Conclusión Final")
+       # --- LÓGICA DE VISUALIZACIÓN ---
         
-        fig_comp, ax_comp = plt.subplots(figsize=(8, 4))
-        indices = ["Espera Media", "Retorno Media"]
-        ax_comp.bar([0, 2], [tme_f, tmr_f], width=0.6, label='FCFS', color='#1f77b4')
-        ax_comp.bar([0.7, 2.7], [tme_s, tmr_s], width=0.6, label='SPN', color='#2ca02c')
-        ax_comp.set_xticks([0.35, 2.35])
-        ax_comp.set_xticklabels(indices)
-        ax_comp.set_ylabel("Unidades de Tiempo")
-        ax_comp.legend()
-        st.pyplot(fig_comp)
+        if modo_vista == "Simulación Animada":
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("🕹️ Control de Animación")
+            velocidad = st.sidebar.slider("Velocidad (segundos):", 0.05, 1.0, 0.3)
+            btn_iniciar = st.sidebar.button("▶️ Iniciar Simulación")
 
-        if tme_s < tme_f:
-            st.success(f"**Veredicto:** SPN es más eficiente en este escenario.")
+            if btn_iniciar:
+                # Contenedores vacíos para actualización dinámica
+                status_text = st.empty()
+                progreso_bar = st.progress(0)
+                gantt_placeholder = st.empty()
+                tabla_placeholder = st.empty()
+                
+                max_tiempo = max([b['Inicio'] + b['Duración'] for b in gantt_info])
+                
+                for t in range(max_tiempo + 1):
+                    # 1. Actualizar texto y barra de progreso
+                    porcentaje = int((t / max_tiempo) * 100)
+                    status_text.markdown(f"### ⏱️ Reloj del Sistema: `{t}` unidades")
+                    progreso_bar.progress(porcentaje)
+                    
+                    # 2. Dibujar Gantt parcial (solo lo ocurrido hasta tiempo t)
+                    gantt_parcial = []
+                    for b in gantt_info:
+                        if b['Inicio'] <= t:
+                            # Calculamos qué parte del bloque es visible
+                            duracion_visible = min(b['Duración'], t - b['Inicio'])
+                            if duracion_visible > 0:
+                                gantt_parcial.append({
+                                    'Proceso': b['Proceso'],
+                                    'Inicio': b['Inicio'],
+                                    'Duración': duracion_visible
+                                })
+                    
+                    with gantt_placeholder:
+                        fig = dibujar_gantt(gantt_parcial, f"Simulando {metodo} (T={t})", color, max_t_total=max_tiempo)
+                        # Forzamos que el eje X siempre sea el total para que no salte
+                        #fig.gca().set_xlim(0, max_tiempo + 1)
+                        st.pyplot(fig)
+                    
+                    # 3. Mostrar tabla de procesos que ya terminaron
+                    with tabla_placeholder:
+                        terminados = res[res['T. Final'] <= t].sort_values(by="T. Final")
+                        if not terminados.empty:
+                            st.write("### ✅ Procesos Finalizados")
+                            st.dataframe(terminados, use_container_width=True)
+                    
+                    time.sleep(velocidad)
+                
+                st.balloons()
+                st.success("✨ Simulación completada con éxito.")
+
         else:
-            st.info("FCFS ofrece un rendimiento competitivo en este caso.")
+            # --- MODO ESTÁTICO (VISTA FINAL) ---
+            st.subheader(f"📊 Análisis de Rendimiento Final: {metodo}")
+            c1, c2, c3 = st.columns(3)
+            tme = res['T. Espera'].mean()
+            tmr = res['T. Retorno'].mean()
+            c1.metric("TME (Espera Media)", f"{tme:.2f}")
+            c2.metric("TMR (Retorno Medio)", f"{tmr:.2f}")
+            c3.metric("Total Procesos", len(res))
 
-        # --- BOTÓN DE DESCARGA REINSTALADO ---
+            st.write("### 🕒 Detalle de Ejecución (Paso a Paso)")
+            df_detallado = pd.DataFrame(gantt_info)
+            df_detallado['Fin'] = df_detallado['Inicio'] + df_detallado['Duración']
+            st.table(df_detallado[['Proceso', 'Inicio', 'Duración', 'Fin']])
+
+            st.write("### 📋 Tabla de Tiempos Final")
+            st.dataframe(res.sort_values(by="T. Final"), use_container_width=True)
+
+            st.write("### 📈 Diagrama de Gantt Final")
+            fig_gantt = dibujar_gantt(gantt_info, f"Gantt Final - {metodo}", color)
+            if fig_gantt:
+                st.pyplot(fig_gantt)
+
+        # --- SECCIÓN DE DESCARGA (Común a ambos modos) ---
         st.markdown("---")
-        csv = res_spn.to_csv(index=False).encode('utf-8')
+        csv_data = res.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="📥 Descargar Reporte de Simulación (CSV)",
-            data=csv,
-            file_name=f"reporte_simulacion_{archivo_subido.name}",
+            label="📥 Descargar Reporte Completo (CSV)",
+            data=csv_data,
+            file_name=f"simulacion_{metodo.replace(' ', '_')}.csv",
             mime="text/csv",
             use_container_width=True
         )
 
     else:
-        st.error("Error en el formato de los datos.")
+        st.error("❌ Error: No se pudieron procesar los datos. Verifique que el archivo no tenga filas vacías.")
 else:
-    st.info("👈 Sube un archivo para iniciar la simulación.")
+    # Mensaje inicial cuando no hay archivo
+    st.info("👈 Por favor, cargue un archivo CSV o TXT desde la barra lateral para iniciar.")
+
