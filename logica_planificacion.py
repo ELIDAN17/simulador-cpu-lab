@@ -1,127 +1,131 @@
 import pandas as pd
-import os
 
-def cargar_procesos(archivo_o_ruta):
+def cargar_procesos(archivo):
     try:
-        df = pd.read_csv(archivo_o_ruta, sep=None, engine='python')
-        
-        # 1. Normalizar nombres de columnas (quitar espacios y corregir tildes)
+        df = pd.read_csv(archivo, sep=None, engine='python')
         df.columns = [c.strip().replace('T_llegada', 'T. llegada').replace('Duracion', 'Duración') for c in df.columns]
-
-        # 2. Si falta 'T. llegada', la creamos con 0 (Caso Tarea 1.1)
-        if 'T. llegada' not in df.columns:
-            df['T. llegada'] = 0
-            
-        # 3. Verificación mínima
-        columnas_esenciales = ['Proceso', 'Duración']
-        if not all(col in df.columns for col in columnas_esenciales):
-            return None
-            
-        # Asegurar que los datos sean numéricos
+        if 'T. llegada' not in df.columns: df['T. llegada'] = 0
         df['T. llegada'] = pd.to_numeric(df['T. llegada'], errors='coerce').fillna(0)
         df['Duración'] = pd.to_numeric(df['Duración'], errors='coerce').fillna(1)
-        
         return df[['Proceso', 'T. llegada', 'Duración']]
-        
-    except Exception:
-        return None
+    except: return None
 
+# --- FCFS (No Expulsivo) ---
 def calcular_fcfs(df_procesos):
-    # Asegurar que los datos estén ordenados por tiempo de llegada
-    df = df_procesos.sort_values(by='T. llegada').copy()
-    
-    tiempos_inicio = []
-    tiempos_fin = []
-    
-    tiempo_actual = 0
-    for index, fila in df.iterrows():
-        # El proceso inicia cuando llega o cuando la CPU se libera
-        inicio = max(fila['T. llegada'], tiempo_actual)
+    df = df_procesos.sort_values(by=['T. llegada', 'Proceso']).copy()
+    gantt, tiempo, lista = [], 0, []
+    for _, fila in df.iterrows():
+        inicio = max(fila['T. llegada'], tiempo)
         fin = inicio + fila['Duración']
-        
-        tiempos_inicio.append(inicio)
-        tiempos_fin.append(fin)
-        tiempo_actual = fin
-        
-    df['T. Inicio'] = tiempos_inicio
-    df['T. Final'] = tiempos_fin
-    df['T. Retorno'] = df['T. Final'] - df['T. llegada']
-    df['T. Espera'] = df['T. Retorno'] - df['Duración']
-    
-    return df
+        gantt.append({'Proceso': fila['Proceso'], 'Inicio': inicio, 'Duración': fila['Duración']})
+        lista.append({'Proceso': fila['Proceso'], 'T. llegada': fila['T. llegada'], 'Duración': fila['Duración'], 
+                       'T. Final': fin, 'T. Retorno': fin - fila['T. llegada'], 'T. Espera': (fin - fila['T. llegada']) - fila['Duración']})
+        tiempo = fin
+    return pd.DataFrame(lista), gantt
 
+# --- SPN (No Expulsivo) ---
 def calcular_spn(df_procesos):
     df = df_procesos.copy()
     n = len(df)
-    procesos_finalizados = []
-    tiempo_actual = 0
+    tiempo_actual, finalizados, gantt, lista_final = 0, 0, [], []
     pendientes = df.to_dict('records')
-    lista_final = []
 
-    while len(lista_final) < n:
-        # Filtrar procesos que ya han llegado al tiempo actual y no han terminado
+    while finalizados < n:
         disponibles = [p for p in pendientes if p['T. llegada'] <= tiempo_actual]
-        
         if disponibles:
-            # Seleccionar el proceso con la menor duración (Criterio SPN)
-            proceso_elegido = min(disponibles, key=lambda x: x['Duración'])
-            pendientes.remove(proceso_elegido)
+            # Seleccionar el de menor duración (Criterio SPN)
+            proceso = min(disponibles, key=lambda x: x['Duración'])
+            pendientes.remove(proceso)
             
-            proceso_elegido['T. Inicio'] = tiempo_actual
-            proceso_elegido['T. Final'] = tiempo_actual + proceso_elegido['Duración']
-            proceso_elegido['T. Retorno'] = proceso_elegido['T. Final'] - proceso_elegido['T. llegada']
-            proceso_elegido['T. Espera'] = proceso_elegido['T. Retorno'] - proceso_elegido['Duración']
+            inicio = tiempo_actual
+            fin = inicio + proceso['Duración']
             
-            tiempo_actual = proceso_elegido['T. Final']
-            lista_final.append(proceso_elegido)
+            gantt.append({'Proceso': proceso['Proceso'], 'Inicio': inicio, 'Duración': proceso['Duración']})
+            lista_final.append({
+                'Proceso': proceso['Proceso'], 'T. llegada': proceso['T. llegada'], 'Duración': proceso['Duración'],
+                'T. Final': fin, 'T. Retorno': fin - proceso['T. llegada'], 'T. Espera': (fin - proceso['T. llegada']) - proceso['Duración']
+            })
+            tiempo_actual = fin
+            finalizados += 1
         else:
-            # Si nadie ha llegado, avanzar el reloj al tiempo de llegada del siguiente
             tiempo_actual += 1
+    return pd.DataFrame(lista_final), gantt
+
+# --- SRT (Expulsivo) ---
+def calcular_srt(df_procesos):
+    df = df_procesos.copy()
+    n = len(df)
+    tiempo_actual, finalizados, gantt = 0, 0, []
+    restante = df['Duración'].tolist()
+    completado = [False] * n
+    ultimo_idx, inicio_bloque = -1, 0
+    res_metricas = [{} for _ in range(n)]
+
+    while finalizados < n:
+        disponibles = [i for i in range(n) if df.iloc[i]['T. llegada'] <= tiempo_actual and not completado[i]]
+        if not disponibles:
+            tiempo_actual += 1
+            continue
+        
+        idx = min(disponibles, key=lambda i: restante[i])
+        
+        if idx != ultimo_idx:
+            if ultimo_idx != -1:
+                gantt.append({'Proceso': df.iloc[ultimo_idx]['Proceso'], 'Inicio': inicio_bloque, 'Duración': tiempo_actual - inicio_bloque})
+            inicio_bloque = tiempo_actual
+            ultimo_idx = idx
+
+        restante[idx] -= 1
+        tiempo_actual += 1
+
+        if restante[idx] == 0:
+            completado[idx] = True
+            finalizados += 1
+            gantt.append({'Proceso': df.iloc[idx]['Proceso'], 'Inicio': inicio_bloque, 'Duración': tiempo_actual - inicio_bloque})
+            res_metricas[idx] = {
+                'Proceso': df.iloc[idx]['Proceso'], 'T. llegada': df.iloc[idx]['T. llegada'], 'Duración': df.iloc[idx]['Duración'],
+                'T. Final': tiempo_actual, 'T. Retorno': tiempo_actual - df.iloc[idx]['T. llegada'], 
+                'T. Espera': (tiempo_actual - df.iloc[idx]['T. llegada']) - df.iloc[idx]['Duración']
+            }
+            ultimo_idx = -1
             
-    return pd.DataFrame(lista_final)
+    return pd.DataFrame(res_metricas), gantt
 
-def imprimir_resultados(df, nombre_algoritmo):
-    print(f"\n--- RESULTADOS {nombre_algoritmo} ---")
-    # Mostrar la tabla completa
-    print(df.to_string(index=False))
-    
-    # Calcular promedios
-    tmr = df['T. Retorno'].mean()
-    tme = df['T. Espera'].mean()
-    
-    print("-" * 30)
-    print(f"Tiempo Medio de Retorno (TMR): {tmr:.2f}")
-    print(f"Tiempo Medio de Espera (TME): {tme:.2f}")
-    print("-" * 30)
-    return tme
+# --- Round Robin (Expulsivo) ---
+def calcular_rr(df_procesos, q):
+    df = df_procesos.sort_values(by='T. llegada').copy()
+    tiempo, gantt, cola, finalizados = 0, [], [], 0
+    n = len(df)
+    restante = df.set_index('Proceso')['Duración'].to_dict()
+    llegadas = df.set_index('Proceso')['T. llegada'].to_dict()
+    duraciones_org = df.set_index('Proceso')['Duración'].to_dict()
+    procesos_nombres = df['Proceso'].tolist()
+    agregados, metricas = [], []
 
-# Para probarlo con los datos de la Fase 1:
-if __name__ == "__main__":
-    archivo = "procesos.csv"  # Asegúrate de que este archivo exista con los datos correctos
-    print(f"Procesando archivo: {archivo} : archivo cargado con éxito")
-    df_datos = cargar_procesos(archivo)
-    
-    if df_datos is not None:
-        # Ejecutar y mostrar FCFS
-        resultado_fcfs = calcular_fcfs(df_datos)
-        tme_fcfs =imprimir_resultados(resultado_fcfs, "FCFS")
-
-        # Ejecutar y mostrar SPN
-        resultado_spn = calcular_spn(df_datos)
-        tme_spn = imprimir_resultados(resultado_spn, "SPN")
+    while finalizados < n:
+        for p in procesos_nombres:
+            if llegadas[p] <= tiempo and p not in agregados:
+                cola.append(p); agregados.append(p)
         
-        # --- SECCIÓN DE COMPARACIÓN (Tu idea interesante) ---
-        print("\n" + "*"*50)
-        print("RESUMEN COMPARATIVO DE RENDIMIENTO")
-        print(f"Espera Promedio FCFS: {tme_fcfs:.2f}")
-        print(f"Espera Promedio SPN:  {tme_spn:.2f}")
+        if not cola:
+            tiempo += 1; continue
+            
+        curr = cola.pop(0)
+        gasto = min(restante[curr], q)
+        gantt.append({'Proceso': curr, 'Inicio': tiempo, 'Duración': gasto})
+        tiempo += gasto
+        restante[curr] -= gasto
         
-        if tme_spn < tme_fcfs:
-            print(f"RESULTADO: SPN es más eficiente por {(tme_fcfs - tme_spn):.2f} unidades.")
-        elif tme_spn == tme_fcfs:
-            print("RESULTADO: Ambos algoritmos rinden igual para esta carga.")
+        for p in procesos_nombres:
+            if llegadas[p] <= tiempo and p not in agregados:
+                cola.append(p); agregados.append(p)
+        
+        if restante[curr] > 0: cola.append(curr)
         else:
-            print("RESULTADO: FCFS resultó más eficiente.")
-        print("*"*50)
-    else:
-        print("ERROR CRÍTICO: No se pudo procesar la fuente de datos.")
+            finalizados += 1
+            metricas.append({
+                'Proceso': curr, 'T. llegada': llegadas[curr], 'Duración': duraciones_org[curr],
+                'T. Final': tiempo, 'T. Retorno': tiempo - llegadas[curr], 'T. Espera': (tiempo - llegadas[curr]) - duraciones_org[curr]
+            })
+            
+    return pd.DataFrame(metricas), gantt
