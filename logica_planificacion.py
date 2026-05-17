@@ -1,17 +1,32 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
+import numpy as np
 
 def cargar_procesos(archivo):
     try:
         df = pd.read_csv(archivo, sep=None, engine='python')
-        df.columns = [c.strip().replace('T_llegada', 'T. llegada').replace('Duracion', 'Duración') for c in df.columns]
+        df.columns = [c.strip() for c in df.columns]
+        rename_dict = {
+            'T_llegada': 'T. llegada', 'Duracion': 'Duración',
+            'Memoria': 'Memoria', 'Proceso': 'Proceso'
+        }
+        df = df.rename(columns=rename_dict)
+        
         if 'T. llegada' not in df.columns: df['T. llegada'] = 0
+        if 'Duración' not in df.columns: df['Duración'] = 1
+        if 'Memoria' not in df.columns: df['Memoria'] = 100 
+        
         df['T. llegada'] = pd.to_numeric(df['T. llegada'], errors='coerce').fillna(0)
         df['Duración'] = pd.to_numeric(df['Duración'], errors='coerce').fillna(1)
-        return df[['Proceso', 'T. llegada', 'Duración']]
-    except: return None
+        df['Memoria'] = pd.to_numeric(df['Memoria'], errors='coerce').fillna(100)
+        return df
+    except:
+        return None
 
-# --- FCFS (No Expulsivo) ---
+# ==========================================
+#        LÓGICA DE PLANIFICACIÓN CPU
+# ==========================================
+
 def calcular_fcfs(df_procesos):
     df = df_procesos.sort_values(by=['T. llegada', 'Proceso']).copy()
     gantt, tiempo, lista = [], 0, []
@@ -19,12 +34,13 @@ def calcular_fcfs(df_procesos):
         inicio = max(fila['T. llegada'], tiempo)
         fin = inicio + fila['Duración']
         gantt.append({'Proceso': fila['Proceso'], 'Inicio': inicio, 'Duración': fila['Duración']})
-        lista.append({'Proceso': fila['Proceso'], 'T. llegada': fila['T. llegada'], 'Duración': fila['Duración'], 
-                       'T. Final': fin, 'T. Retorno': fin - fila['T. llegada'], 'T. Espera': (fin - fila['T. llegada']) - fila['Duración']})
+        lista.append({
+            'Proceso': fila['Proceso'], 'T. llegada': fila['T. llegada'], 'Duración': fila['Duración'], 
+            'T. Final': fin, 'T. Retorno': fin - fila['T. llegada'], 'T. Espera': (fin - fila['T. llegada']) - fila['Duración']
+        })
         tiempo = fin
     return pd.DataFrame(lista), gantt
 
-# --- SPN (No Expulsivo) ---
 def calcular_spn(df_procesos):
     df = df_procesos.copy()
     n = len(df)
@@ -34,13 +50,10 @@ def calcular_spn(df_procesos):
     while finalizados < n:
         disponibles = [p for p in pendientes if p['T. llegada'] <= tiempo_actual]
         if disponibles:
-            # Seleccionar el de menor duración (Criterio SPN)
             proceso = min(disponibles, key=lambda x: x['Duración'])
             pendientes.remove(proceso)
-            
             inicio = tiempo_actual
             fin = inicio + proceso['Duración']
-            
             gantt.append({'Proceso': proceso['Proceso'], 'Inicio': inicio, 'Duración': proceso['Duración']})
             lista_final.append({
                 'Proceso': proceso['Proceso'], 'T. llegada': proceso['T. llegada'], 'Duración': proceso['Duración'],
@@ -52,7 +65,6 @@ def calcular_spn(df_procesos):
             tiempo_actual += 1
     return pd.DataFrame(lista_final), gantt
 
-# --- SRT (Expulsivo) ---
 def calcular_srt(df_procesos):
     df = df_procesos.copy()
     n = len(df)
@@ -67,9 +79,7 @@ def calcular_srt(df_procesos):
         if not disponibles:
             tiempo_actual += 1
             continue
-        
         idx = min(disponibles, key=lambda i: restante[i])
-        
         if idx != ultimo_idx:
             if ultimo_idx != -1:
                 gantt.append({'Proceso': df.iloc[ultimo_idx]['Proceso'], 'Inicio': inicio_bloque, 'Duración': tiempo_actual - inicio_bloque})
@@ -89,10 +99,8 @@ def calcular_srt(df_procesos):
                 'T. Espera': (tiempo_actual - df.iloc[idx]['T. llegada']) - df.iloc[idx]['Duración']
             }
             ultimo_idx = -1
-            
     return pd.DataFrame(res_metricas), gantt
 
-# --- Round Robin (Expulsivo) ---
 def calcular_rr(df_procesos, q):
     df = df_procesos.sort_values(by='T. llegada').copy()
     tiempo, gantt, cola, finalizados = 0, [], [], 0
@@ -107,26 +115,119 @@ def calcular_rr(df_procesos, q):
         for p in procesos_nombres:
             if llegadas[p] <= tiempo and p not in agregados:
                 cola.append(p); agregados.append(p)
-        
         if not cola:
             tiempo += 1; continue
-            
         curr = cola.pop(0)
         gasto = min(restante[curr], q)
         gantt.append({'Proceso': curr, 'Inicio': tiempo, 'Duración': gasto})
         tiempo += gasto
         restante[curr] -= gasto
-        
         for p in procesos_nombres:
             if llegadas[p] <= tiempo and p not in agregados:
                 cola.append(p); agregados.append(p)
-        
-        if restante[curr] > 0: cola.append(curr)
+        if restante[curr] > 0: 
+            cola.append(curr)
         else:
             finalizados += 1
             metricas.append({
                 'Proceso': curr, 'T. llegada': llegadas[curr], 'Duración': duraciones_org[curr],
                 'T. Final': tiempo, 'T. Retorno': tiempo - llegadas[curr], 'T. Espera': (tiempo - llegadas[curr]) - duraciones_org[curr]
             })
-            
     return pd.DataFrame(metricas), gantt
+
+# ==========================================
+#         LÓGICA DE GESTIÓN MEMORIA
+# ==========================================
+
+def copiar_estado(estado):
+    return [dict(b) for b in estado]
+
+def calcular_primer_ajuste_paso_a_paso(memoria_total, tam_so, procesos):
+    historial = []
+    memoria_estado = [{'proceso': 'LIBRE', 'base': tam_so, 'tam': memoria_total - tam_so, 'estado': 'Libre'}]
+    for _, p in procesos.iterrows():
+        asignado = False
+        for i, bloque in enumerate(memoria_estado):
+            if bloque['estado'] == 'Libre' and bloque['tam'] >= p['Memoria']:
+                viejo_tam = bloque['tam']
+                bloque['estado'] = 'Ocupado'
+                bloque['proceso'] = p['Proceso']
+                bloque['tam'] = p['Memoria']
+                sobrante = viejo_tam - p['Memoria']
+                if sobrante > 0:
+                    memoria_estado.insert(i + 1, {'proceso': 'LIBRE', 'base': bloque['base'] + p['Memoria'], 'tam': sobrante, 'estado': 'Libre'})
+                asignado = True
+                break
+        historial.append({'proceso': p['Proceso'], 'estado_ram': copiar_estado(memoria_estado), 'asignado': asignado})
+    return historial
+
+def calcular_mejor_ajuste_paso_a_paso(memoria_total, tam_so, procesos):
+    historial = []
+    memoria_estado = [{'proceso': 'LIBRE', 'base': tam_so, 'tam': memoria_total - tam_so, 'estado': 'Libre'}]
+    for _, p in procesos.iterrows():
+        aptos = [i for i, b in enumerate(memoria_estado) if b['estado'] == 'Libre' and b['tam'] >= p['Memoria']]
+        asignado = False
+        if aptos:
+            idx = min(aptos, key=lambda i: memoria_estado[i]['tam'])
+            bloque = memoria_estado[idx]
+            viejo_tam = bloque['tam']
+            bloque['estado'] = 'Ocupado'
+            bloque['proceso'] = p['Proceso']
+            bloque['tam'] = p['Memoria']
+            sobrante = viejo_tam - p['Memoria']
+            if sobrante > 0:
+                memoria_estado.insert(idx + 1, {'proceso': 'LIBRE', 'base': bloque['base'] + p['Memoria'], 'tam': sobrante, 'estado': 'Libre'})
+            asignado = True
+        historial.append({'proceso': p['Proceso'], 'estado_ram': copiar_estado(memoria_estado), 'asignado': asignado})
+    return historial
+
+def calcular_peor_ajuste_paso_a_paso(memoria_total, tam_so, procesos):
+    historial = []
+    memoria_estado = [{'proceso': 'LIBRE', 'base': tam_so, 'tam': memoria_total - tam_so, 'estado': 'Libre'}]
+    for _, p in procesos.iterrows():
+        aptos = [i for i, b in enumerate(memoria_estado) if b['estado'] == 'Libre' and b['tam'] >= p['Memoria']]
+        asignado = False
+        if aptos:
+            idx = max(aptos, key=lambda i: memoria_estado[i]['tam'])
+            bloque = memoria_estado[idx]
+            viejo_tam = bloque['tam']
+            bloque['estado'] = 'Ocupado'
+            bloque['proceso'] = p['Proceso']
+            bloque['tam'] = p['Memoria']
+            sobrante = viejo_tam - p['Memoria']
+            if sobrante > 0:
+                memoria_estado.insert(idx + 1, {'proceso': 'LIBRE', 'base': bloque['base'] + p['Memoria'], 'tam': sobrante, 'estado': 'Libre'})
+            asignado = True
+        historial.append({'proceso': p['Proceso'], 'estado_ram': copiar_estado(memoria_estado), 'asignado': asignado})
+    return historial
+
+def calcular_buddy_system_paso_a_paso(memoria_total, tam_so, procesos):
+    historial = []
+    mem_disponible = memoria_total - tam_so
+    nodos = [{'tam': mem_disponible, 'base': tam_so, 'estado': 'Libre', 'proceso': 'LIBRE'}]
+    for _, p in procesos.iterrows():
+        tam_necesario = 2**(int(p['Memoria']-1).bit_length())
+        asignado = False
+        for i, nodo in enumerate(nodos):
+            if nodo['estado'] == 'Libre' and nodo['tam'] >= tam_necesario:
+                while nodo['tam'] > tam_necesario:
+                    mitad = nodo['tam'] // 2
+                    nodos.insert(i + 1, {'tam': mitad, 'base': nodo['base'] + mitad, 'estado': 'Libre', 'proceso': 'LIBRE'})
+                    nodo['tam'] = mitad
+                nodo['estado'] = 'Ocupado'
+                nodo['proceso'] = p['Proceso']
+                asignado = True
+                break
+        historial.append({'proceso': p['Proceso'], 'estado_ram': copiar_estado(nodos), 'asignado': asignado})
+    return historial
+
+def calcular_metricas_memoria(memoria_estado, memoria_total, tam_so):
+    ocupado_procesos = sum(b['tam'] for b in memoria_estado if b['estado'] == 'Ocupado')
+    total_ocupado = ocupado_procesos + tam_so
+    libre = memoria_total - total_ocupado
+    fragmentacion_externa = sum(b['tam'] for b in memoria_estado if b['estado'] == 'Libre')
+    porcentaje_uso = (total_ocupado / memoria_total) * 100
+    return {
+        'Uso Total': total_ocupado, 'Libre Total': libre,
+        'Fragmentación Externa': fragmentacion_externa, 'Porcentaje de Uso': porcentaje_uso
+    }
