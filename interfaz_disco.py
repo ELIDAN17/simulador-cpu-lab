@@ -69,7 +69,7 @@ def dibujar_matriz_disco(disco, bloques_ocultar, bloque_resaltado=None):
 
 
 def renderizar_modulo_disco(disco, limite_bloques):
-    st.subheader("📁 Simulación Animada Automática e Historial de Pasos")
+    st.subheader("📁 Simulación de asignacion de disco animado")
     
     # Inicializar el historial persistente en la sesión
     if "historial_auditoria" not in st.session_state:
@@ -107,7 +107,7 @@ def renderizar_modulo_disco(disco, limite_bloques):
     with c3:
         metodo_asig = st.selectbox(
             "Método de Asignación:", 
-            ["Contigua", "Extensiones", "Enlazada", "FAT", "Indexada Simple", "Indexada Multinivel", "Combinada (I-nodo)", "Gestión por Bitmap"]
+            ["Contigua", "Extensiones", "Enlazada", "FAT", "Indexada", "Multinivel", "Combinada", "Gestión por Bitmap"]
         )
     
     velocidad = st.slider("🐢 Velocidad de la animación automática (segundos):", min_value=0.1, max_value=1.5, value=0.5, step=0.1)
@@ -120,9 +120,9 @@ def renderizar_modulo_disco(disco, limite_bloques):
             elif metodo_asig == "Extensiones": exito, msg = disco.asignar_extensiones(nuevo_nombre, nuevo_tam)
             elif metodo_asig == "Enlazada": exito, msg = disco.asignar_enlazada(nuevo_nombre, nuevo_tam)
             elif metodo_asig == "FAT": exito, msg = disco.asignar_fat(nuevo_nombre, nuevo_tam)
-            elif metodo_asig == "Indexada Simple": exito, msg = disco.asignar_indexada(nuevo_nombre, nuevo_tam)
-            elif metodo_asig == "Indexada Multinivel": exito, msg = disco.asignar_multinivel(nuevo_nombre, nuevo_tam)
-            elif metodo_asig == "Combinada (I-nodo)": exito, msg = disco.combinada(nuevo_nombre, nuevo_tam) if hasattr(disco, 'combinada') else disco.asignar_combinada(nuevo_nombre, nuevo_tam)
+            elif metodo_asig == "Indexada": exito, msg = disco.asignar_indexada(nuevo_nombre, nuevo_tam)
+            elif metodo_asig == "Multinivel": exito, msg = disco.asignar_multinivel(nuevo_nombre, nuevo_tam)
+            elif metodo_asig == "Combinada": exito, msg = disco.combinada(nuevo_nombre, nuevo_tam) if hasattr(disco, 'combinada') else disco.asignar_combinada(nuevo_nombre, nuevo_tam)
             else: exito, msg = disco.asignar_por_bitmap(nuevo_nombre, nuevo_tam)
             
             if exito:
