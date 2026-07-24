@@ -48,7 +48,7 @@ def dibujar_matriz_disco(disco, bloques_ocultar, bloque_resaltado=None):
                 borde = "1px solid #475569"
             elif "ÍNDICE" in cont or "ÍND_" in cont:
                 archivo_asoc = cont.replace("ÍNDICE_MAESTRO_", "").replace("ÍNDICE_", "").replace("ÍND_SECUNDARIO_", "").replace("ÍND_INDIRECTO_", "")
-                color_bloque = "#f59e0b"
+                color_bloque = "#d20bf5dd"
                 texto_b = f"<b>Índice</b><br><span style='font-size:8px;'>{archivo_asoc}</span>"
                 borde = "2px dashed #b45309"
             else:
